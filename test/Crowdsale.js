@@ -1,10 +1,9 @@
 'use strict';
 
 const SolumToken = artifacts.require("./SolumToken.sol");
+const Crowdsale = artifacts.require("./Crowdsale.sol");
 const assertJump = require('./helpers/assertJump');
-const BigNumber = require('bignumber.js');
 
-let wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 let waitUntil = time => {
 	return new Promise(resolve => {
 		let left = time - new Date().getTime() / 1000;
@@ -18,10 +17,6 @@ let randomInteger = (min, max) => {
 	rand = Math.round(rand);
 	return rand;
 };
-
-// correct this for eth-net. 2 sec delay actual only for testRPC
-const defrostDelaySec = 2;
-let defrostDate = parseInt(new Date().getTime() / 1000) + defrostDelaySec;
 
 contract('SolumToken', function(accounts) {
 	const ownerAccount = accounts[0];
@@ -248,13 +243,6 @@ contract('SolumToken', function(accounts) {
 			assert.equal((await SolumTokenInstance.balanceOf.call(ownerAccount)).valueOf(), amount * 3 / 4, "Invalid owner balance after transfer");
 			assert.equal((await SolumTokenInstance.balanceOf.call(receiveAccount)).valueOf(), amount / 4, "Invalid receiver balance after transfer");
 			assert.equal((await SolumTokenInstance.balanceOf.call(spenderAccount)).valueOf(), 0, "Invalid spender balance after transfer");
-		});
-	});
-	
-	describe('changeOwner()', function() {
-		it("should be changed owner", async function() {
-			await SolumTokenInstance.changeOwner(accounts[1]);
-			assert.equal((await SolumTokenInstance.owner.call()).valueOf(), accounts[1], "Invalid owner after change");
 		});
 	});
 	

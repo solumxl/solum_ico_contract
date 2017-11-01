@@ -3,10 +3,11 @@ pragma solidity ^0.4.11;
 
 import './SolumToken.sol';
 import './Owned.sol';
+import './Delegate.sol';
 import './SafeMath.sol';
 
 
-contract Crowdsale is Owned {
+contract Crowdsale is Owned, Delegate {
 
 	using SafeMath for uint256;
 
@@ -73,8 +74,21 @@ contract Crowdsale is Owned {
 	}
 
 	function() external payable validPurchase validUnHalt {
-		uint256 tokenAmount = msg.value.div(price);
-		uint256 change = msg.value.sub(tokenAmount.mul(price));
+		uint256 usedValue = mint(msg.sender, msg.value);
+		uint256 change = msg.value.sub(usedValue);
+		FundTransfer(msg.sender, msg.value, true);
+		if(change > 0) {
+			FundTransfer(msg.sender, change, false);
+			msg.sender.transfer(change);
+		}
+	}
+
+	function customPayment(address _beneficiary, uint256 _value) external validPurchase validUnHalt onlyDelegate {
+		mint(_beneficiary, _value);
+	}
+
+	function mint(address _beneficiary, uint256 _value) internal returns(uint256) {
+		uint256 tokenAmount = _value.div(price);
 
 		uint256 checkedSupply = token.totalSupply().add(tokenAmount);
 		uint8 stage = now >= stageTwoDates[0] ? 2 : 1;
@@ -82,21 +96,14 @@ contract Crowdsale is Owned {
 		// Ensure new token increment does not exceed the sale amount
 		assert(checkedSupply <= totalSupplyByStage[stage]);
 
-		token.mintToken(msg.sender, tokenAmount);
-
-		FundTransfer(msg.sender, msg.value, true);
-
-		if(change > 0) {
-			FundTransfer(msg.sender, change, false);
-			msg.sender.transfer(change);
-		}
-
-		forwardFunds(msg.value - change);
+		token.mintToken(_beneficiary, tokenAmount);
+		return tokenAmount.mul(price);
 	}
 
-	/// @dev Sends Ether to the contract owner
-	function forwardFunds(uint256 _value) internal {
-		owner.transfer(_value);
+	/// @dev Withdraw ethereum to owner contract address
+	function withdrawFunds() onlyOwner {
+		require((now >= stageOneDates[1] && now < stageTwoDates[0]) || (now >= stageTwoDates[1]));
+		owner.transfer(this.balance);
 	}
 
 	/// Emergency Stop ICO
