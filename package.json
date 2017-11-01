@@ -1,0 +1,5 @@
+{
+  "devDependencies": {
+    "bignumber.js": "^4.1.0"
+  }
+}

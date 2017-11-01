@@ -6,5 +6,8 @@ module.exports = {
 			gas: 4712388,
 			network_id: "*" // Match any network id
 		}
+	},
+	mocha: {
+		useColors: true
 	}
 };

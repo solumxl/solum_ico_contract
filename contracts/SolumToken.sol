@@ -1,56 +1,11 @@
 pragma solidity ^0.4.11;
 
-
 import "./SafeMath.sol";
-
-
-contract Owned {
-	address public owner;
-
-	function Owned() {
-		owner = msg.sender;
-	}
-
-	function changeOwner(address newOwner) onlyOwner {
-		owner = newOwner;
-	}
-
-	modifier onlyOwner {
-		require(msg.sender == owner);
-		_;
-	}
-}
+import "./Owned.sol";
+import "./ERC20Basic.sol";
 
 
 /**
- * @title ERC20Basic
- * @dev Implements erc20 Token Standard
- */
-contract ERC20Basic {
-
-	uint256 _totalSupply;
-
-	function balanceOf(address _owner) constant returns (uint256 balance);
-
-	function totalSupply() constant returns (uint256);
-
-	function transfer(address _to, uint256 _value) returns (bool success);
-
-	event Transfer(address indexed _from, address indexed _to, uint256 _value);
-
-	function transferFrom(address _from, address _to, uint256 _value) returns (bool success);
-
-	function approve(address _spender, uint256 _value) returns (bool success);
-
-	function allowance(address _owner, address _spender) constant returns (uint256 remaining);
-
-	event Approval(address indexed _owner, address indexed _spender, uint256 _value);
-}
-
-
-/**
- * @title Standard erc20 token
- *
  * @dev Implementation of the basic standard token.
  * @dev Based on code by FirstBlood: https://github.com/Firstbloodio/token/blob/master/smart_contract/FirstBloodToken.sol
  */
@@ -59,18 +14,20 @@ contract SolumToken is ERC20Basic, Owned {
 
 	string public name = "Solum";
 
-	uint8 public decimals = 18;
+	uint public decimals = 18;
 
 	string public symbol = "SOL";
 
 	// only after this date balances should be available
-	uint256 public allowAfterDate = 1509442116;
+	uint256 public defrostDate;
 
 	mapping (address => uint256) balances;
 
 	mapping (address => mapping (address => uint256)) allowed;
 
-	function SolumToken() {}
+	function SolumToken(uint256 _defrostDate) {
+		defrostDate = _defrostDate;
+	}
 
 	/**
 	* @dev transfer token for a specified address
@@ -78,7 +35,7 @@ contract SolumToken is ERC20Basic, Owned {
 	* @param _value The amount to be transferred.
 	*/
 	function transfer(address _to, uint256 _value) returns (bool) {
-		require(allowAfterDate <= now);
+		require(defrostDate <= block.timestamp);
 		require(_to != address(0));
 
 		// SafeMath.sub will throw if there is not enough balance.
@@ -88,14 +45,21 @@ contract SolumToken is ERC20Basic, Owned {
 		return true;
 	}
 
+	function mintToken(address _to, uint256 _value) onlyOwner {
+		balances[_to] = balances[_to].add(_value);
+		_totalSupply = _totalSupply.add(_value);
+		Transfer(this, _to, _value);
+	}
+
 	/**
 	* @dev Gets the balance of the specified address.
 	* @param _owner The address to query the the balance of.
 	* @return An uint256 representing the amount owned by the passed address.
 	*/
 	function balanceOf(address _owner) constant returns (uint256 balance) {
-		if (allowAfterDate > now)
-		return 0;
+		if (defrostDate > block.timestamp) {
+			return 0;
+		}
 		return balances[_owner];
 	}
 
@@ -110,7 +74,7 @@ contract SolumToken is ERC20Basic, Owned {
 	 * @param _value uint256 the amount of tokens to be transferred
 	 */
 	function transferFrom(address _from, address _to, uint256 _value) returns (bool) {
-		require(allowAfterDate <= now);
+		require(defrostDate <= block.timestamp);
 		require(_to != address(0));
 
 		// Check is not needed because s_allowance.sub(_value) will already throw if this condition is not met
@@ -148,12 +112,6 @@ contract SolumToken is ERC20Basic, Owned {
 	 */
 	function allowance(address _owner, address _spender) constant returns (uint256 remaining) {
 		return allowed[_owner][_spender];
-	}
-
-	function mintToken(address target, uint256 mintedAmount) onlyOwner {
-		balances[target] = balances[target].add(mintedAmount);
-		_totalSupply = _totalSupply.add(mintedAmount);
-		Transfer(this, target, mintedAmount);
 	}
 
 	function() {
