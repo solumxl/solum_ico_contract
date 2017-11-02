@@ -49,7 +49,7 @@ contract Crowdsale is Owned, Delegate {
 	uint256 _stageOneEndDate,
 	uint256 _stageTwoStartDate,
 	uint256 _stageTwoEndDate,
-	uint256 _stageGoalInEth) {
+	uint256 _stageGoalInEth) public {
 		require(_stageGoalInEth > 0);
 		// date of start stage 1
 		stageOneDates[0] = _stageOneStartDate;
@@ -106,7 +106,7 @@ contract Crowdsale is Owned, Delegate {
 	}
 
 	/// @dev Withdraw ethereum to owner contract address
-	function withdrawFunds() onlyOwner {
+	function withdrawFunds() external onlyOwner {
 		require((now >= stageOneDates[1] && now < stageTwoDates[0]) || (now >= stageTwoDates[1]));
 		owner.transfer(this.balance);
 		FundTransfer(owner, this.balance, false);
@@ -115,7 +115,7 @@ contract Crowdsale is Owned, Delegate {
 	/**
 	* @dev Mint all remaining after two stages tokens to owner contract address
 	*/
-	function withdrawRemainingTokens() onlyOwner {
+	function withdrawRemainingTokens() external onlyOwner {
 		require(now >= stageTwoDates[1]);
 		token.mintToken(owner, tokenTotalSupply.sub(token.totalSupply()));
 	}
@@ -124,18 +124,18 @@ contract Crowdsale is Owned, Delegate {
 	* @dev between fist and second stages owner can change the goal of the second stage
 	* @param _ethAmount New goal in Ether for second stage
 	*/
-	function changeSecondStageGoal(uint256 _ethAmount) onlyOwner {
+	function changeSecondStageGoal(uint256 _ethAmount) external onlyOwner {
 		require(now >= stageOneDates[1] && now < stageTwoDates[0]);
 		price = stageSaleAmount.div(_ethAmount.mul(1 ether));
 		SetPrice(price);
 	}
 
 	/// Emergency Stop ICO
-	function halt() onlyOwner {
+	function halt() external onlyOwner {
 		halted = true;
 	}
 
-	function unhalt() onlyOwner {
+	function unhalt() external onlyOwner {
 		halted = false;
 	}
 }

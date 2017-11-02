@@ -5,11 +5,11 @@ import './Owned.sol';
 contract Delegate is Owned {
 	address public delegate;
 
-	function Delegate() {
+	function Delegate() public {
 		delegate = msg.sender;
 	}
 
-	function changeDelegate(address newDelegate) onlyOwner {
+	function changeDelegate(address newDelegate) public onlyOwner {
 		delegate = newDelegate;
 	}
 

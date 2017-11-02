@@ -4,11 +4,11 @@ pragma solidity ^0.4.11;
 contract Owned {
 	address public owner;
 
-	function Owned() {
+	function Owned() internal {
 		owner = msg.sender;
 	}
 
-	function changeOwner(address newOwner) onlyOwner {
+	function changeOwner(address newOwner) public onlyOwner {
 		owner = newOwner;
 	}
 

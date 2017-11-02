@@ -25,7 +25,7 @@ contract SolumToken is ERC20Basic, Owned {
 
 	mapping (address => mapping (address => uint256)) allowed;
 
-	function SolumToken(uint256 _defrostDate) {
+	function SolumToken(uint256 _defrostDate) public {
 		defrostDate = _defrostDate;
 	}
 
@@ -34,7 +34,7 @@ contract SolumToken is ERC20Basic, Owned {
 	* @param _to The address to transfer to.
 	* @param _value The amount to be transferred.
 	*/
-	function transfer(address _to, uint256 _value) returns (bool) {
+	function transfer(address _to, uint256 _value) external returns (bool) {
 		require(defrostDate <= block.timestamp);
 		require(_to != address(0));
 
@@ -45,7 +45,7 @@ contract SolumToken is ERC20Basic, Owned {
 		return true;
 	}
 
-	function mintToken(address _to, uint256 _value) onlyOwner {
+	function mintToken(address _to, uint256 _value) external onlyOwner {
 		balances[_to] = balances[_to].add(_value);
 		_totalSupply = _totalSupply.add(_value);
 		Transfer(this, _to, _value);
@@ -56,14 +56,14 @@ contract SolumToken is ERC20Basic, Owned {
 	* @param _owner The address to query the the balance of.
 	* @return An uint256 representing the amount owned by the passed address.
 	*/
-	function balanceOf(address _owner) constant returns (uint256 balance) {
+	function balanceOf(address _owner) public constant returns (uint256 balance) {
 		if (defrostDate > block.timestamp) {
 			return 0;
 		}
 		return balances[_owner];
 	}
 
-	function totalSupply() constant returns (uint256) {
+	function totalSupply() public constant returns (uint256) {
 		return _totalSupply;
 	}
 
@@ -73,7 +73,7 @@ contract SolumToken is ERC20Basic, Owned {
 	 * @param _to address The address which you want to transfer to
 	 * @param _value uint256 the amount of tokens to be transferred
 	 */
-	function transferFrom(address _from, address _to, uint256 _value) returns (bool) {
+	function transferFrom(address _from, address _to, uint256 _value) external returns (bool) {
 		require(defrostDate <= block.timestamp);
 		require(_to != address(0));
 
@@ -92,7 +92,7 @@ contract SolumToken is ERC20Basic, Owned {
 	 * @param _spender The address which will spend the funds.
 	 * @param _value The amount of tokens to be spent.
 	 */
-	function approve(address _spender, uint256 _value) returns (bool) {
+	function approve(address _spender, uint256 _value) external returns (bool) {
 		// To change the approve amount you first have to reduce the addresses`
 		//  allowance to zero by calling `approve(_spender, 0)` if it is not
 		//  already 0 to mitigate the race condition described here:
@@ -110,11 +110,11 @@ contract SolumToken is ERC20Basic, Owned {
 	 * @param _spender address The address which will spend the funds.
 	 * @return A uint256 specifying the amount of tokens still available for the spender.
 	 */
-	function allowance(address _owner, address _spender) constant returns (uint256 remaining) {
+	function allowance(address _owner, address _spender) external constant returns (uint256 remaining) {
 		return allowed[_owner][_spender];
 	}
 
-	function() {
+	function() external {
 		//if ether is sent to this address, send it back.
 		revert();
 	}

@@ -9,19 +9,19 @@ contract ERC20Basic {
 
 	uint256 _totalSupply;
 
-	function balanceOf(address _owner) constant returns (uint256 balance);
+	function balanceOf(address _owner) public constant returns (uint256 balance);
 
-	function totalSupply() constant returns (uint256);
+	function totalSupply() public constant returns (uint256);
 
-	function transfer(address _to, uint256 _value) returns (bool success);
+	function transfer(address _to, uint256 _value) external returns (bool success);
 
 	event Transfer(address indexed _from, address indexed _to, uint256 _value);
 
-	function transferFrom(address _from, address _to, uint256 _value) returns (bool success);
+	function transferFrom(address _from, address _to, uint256 _value) external returns (bool success);
 
-	function approve(address _spender, uint256 _value) returns (bool success);
+	function approve(address _spender, uint256 _value) external returns (bool success);
 
-	function allowance(address _owner, address _spender) constant returns (uint256 remaining);
+	function allowance(address _owner, address _spender) external constant returns (uint256 remaining);
 
 	event Approval(address indexed _owner, address indexed _spender, uint256 _value);
 }
