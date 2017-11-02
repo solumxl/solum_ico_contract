@@ -28,9 +28,9 @@ contract Crowdsale is Owned, Delegate {
 	uint256 public price;
 
 	// Modifiers
-	modifier validPurchase() {
+	modifier validPurchase(uint256 _value) {
 		require((now >= stageOneDates[0] && now < stageOneDates[1]) || (now >= stageTwoDates[0] && now < stageTwoDates[1]));
-		require(msg.value > 0);
+		require(_value > 0);
 		_;
 	}
 
@@ -50,6 +50,7 @@ contract Crowdsale is Owned, Delegate {
 	uint256 _stageTwoStartDate,
 	uint256 _stageTwoEndDate,
 	uint256 _stageGoalInEth) {
+		require(_stageGoalInEth > 0);
 		// date of start stage 1
 		stageOneDates[0] = _stageOneStartDate;
 		// date of end stage 1
@@ -69,57 +70,53 @@ contract Crowdsale is Owned, Delegate {
 		/// 264 million tokens for sale
 		stageSaleAmount = 264 * (10 ** 6) * (10 ** token.decimals());
 
-		price = _stageGoalInEth.mul(1 ether).div(stageSaleAmount);
+		price = stageSaleAmount.div(_stageGoalInEth.mul(1 ether));
 		SetPrice(price);
 	}
 
-	function() external payable validPurchase validUnHalt {
-		uint256 usedValue = mint(msg.sender, msg.value);
-		uint256 change = msg.value.sub(usedValue);
+	function() external payable validPurchase(msg.value) validUnHalt {
+
+		uint256 unused = mint(msg.sender, msg.value);
 		FundTransfer(msg.sender, msg.value, true);
-		if(change > 0) {
-			FundTransfer(msg.sender, change, false);
-			msg.sender.transfer(change);
+		if(unused > 0) {
+			msg.sender.transfer(unused);
+			FundTransfer(msg.sender, unused, false);
 		}
 	}
 
-	function customPayment(address _beneficiary, uint256 _value) external validPurchase validUnHalt onlyDelegate {
+	function customPayment(address _beneficiary, uint256 _value) external validPurchase(_value) validUnHalt onlyDelegate {
 		mint(_beneficiary, _value);
 	}
 
 	function mint(address _beneficiary, uint256 _value) internal returns(uint256) {
-		uint256 tokenAmount = _value.div(price);
-
-		uint256 checkedSupply = token.totalSupply().add(tokenAmount);
 		uint8 stage = now >= stageTwoDates[0] ? 2 : 1;
+		require(stageSaleAmount > totalSupplyByStage[stage]);
+		uint256 tokenAmount = _value.mul(price);
+		uint256 unusedValue = 0;
 
-		// Ensure new token increment does not exceed the sale amount
-		assert(checkedSupply <= totalSupplyByStage[stage]);
+		uint256 notSold = stageSaleAmount - totalSupplyByStage[stage];
+		if(notSold < tokenAmount) {
+			unusedValue = tokenAmount.sub(notSold).div(price);
+			tokenAmount = notSold;
+		}
+		totalSupplyByStage[stage] = totalSupplyByStage[stage].add(tokenAmount);
 
 		token.mintToken(_beneficiary, tokenAmount);
-		return tokenAmount.mul(price);
+		return unusedValue;
 	}
 
 	/// @dev Withdraw ethereum to owner contract address
 	function withdrawFunds() onlyOwner {
 		require((now >= stageOneDates[1] && now < stageTwoDates[0]) || (now >= stageTwoDates[1]));
 		owner.transfer(this.balance);
-	}
-
-	/// Emergency Stop ICO
-	function halt() onlyOwner {
-		halted = true;
-	}
-
-	function unhalt() onlyOwner {
-		halted = false;
+		FundTransfer(owner, this.balance, false);
 	}
 
 	/**
 	* @dev Mint all remaining after two stages tokens to owner contract address
 	*/
 	function withdrawRemainingTokens() onlyOwner {
-		require(now > stageTwoDates[1]);
+		require(now >= stageTwoDates[1]);
 		token.mintToken(owner, tokenTotalSupply.sub(token.totalSupply()));
 	}
 
@@ -129,7 +126,16 @@ contract Crowdsale is Owned, Delegate {
 	*/
 	function changeSecondStageGoal(uint256 _ethAmount) onlyOwner {
 		require(now >= stageOneDates[1] && now < stageTwoDates[0]);
-		price = _ethAmount.mul(1 ether).div(stageSaleAmount);
+		price = stageSaleAmount.div(_ethAmount.mul(1 ether));
 		SetPrice(price);
+	}
+
+	/// Emergency Stop ICO
+	function halt() onlyOwner {
+		halted = true;
+	}
+
+	function unhalt() onlyOwner {
+		halted = false;
 	}
 }

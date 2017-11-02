@@ -21,7 +21,7 @@ let randomInteger = (min, max) => {
 
 // correct this for eth-net. 2 sec delay actual only for testRPC
 const defrostDelaySec = 2;
-let defrostDate = parseInt(new Date().getTime() / 1000) + defrostDelaySec;
+let defrostDate = parseInt(new Date().getTime() / 1000);
 
 contract('SolumToken', function(accounts) {
 	const ownerAccount = accounts[0];
@@ -50,6 +50,9 @@ contract('SolumToken', function(accounts) {
 	});
 	
 	it("should mint token correctly but not send (before defrost)", async function() {
+		let defrostDate = parseInt(new Date().getTime() / 1000) + defrostDelaySec;
+		SolumTokenInstance = await SolumToken.new(defrostDate);
+		
 		const firstAccount = accounts[0],
 			testAccount = accounts[3],
 			amount = 1000;
@@ -58,7 +61,7 @@ contract('SolumToken', function(accounts) {
 		assert.equal(balance.valueOf(), 0, "Test account balance not zero after deploy");
 		
 		await SolumTokenInstance.mintToken(testAccount, amount, {from: firstAccount});
-		let defrostDate = parseInt((await SolumTokenInstance.defrostDate.call()).valueOf());
+		defrostDate = parseInt((await SolumTokenInstance.defrostDate.call()).valueOf());
 		assert.isTrue(defrostDate > parseInt(new Date().getTime() / 1000), 'Defrost time has come');
 		
 		balance = await SolumTokenInstance.balanceOf.call(testAccount);

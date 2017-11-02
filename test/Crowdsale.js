@@ -2,7 +2,10 @@
 
 const SolumToken = artifacts.require("./SolumToken.sol");
 const Crowdsale = artifacts.require("./Crowdsale.sol");
+const Helper = artifacts.require("./Helper.sol");
 const assertJump = require('./helpers/assertJump');
+const web3 = new (require('web3'))();
+const BigNumber = require('bignumber.js');
 
 let waitUntil = time => {
 	return new Promise(resolve => {
@@ -12,238 +15,332 @@ let waitUntil = time => {
 		setTimeout(resolve, Math.ceil(left) * 1000);
 	});
 };
+let wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
 let randomInteger = (min, max) => {
 	let rand = min + Math.random() * (max - min);
 	rand = Math.round(rand);
 	return rand;
 };
 
-contract('SolumToken', function(accounts) {
+let getTime = (offset) => {
+	return parseInt(new Date().getTime() / 1000 + offset);
+};
+
+const stageGoal = 264000000000000000000000000;
+const totalMaxSupply = 800000000000000000000000000;
+const gasPrice = 100000000000;
+const goal = 1000;
+
+contract('Crowdsale', function(accounts) {
 	const ownerAccount = accounts[0];
 	
-	let SolumTokenInstance = {
-		// only for ide tips
-		mintToken: (_to, _value) => {},
-		balanceOf: (_owner) => {},
-		transferFrom: (_from, _to, _value) => {},
-		approve: (_spender, _value) => {},
-		allowance: (_owner, _spender) => {}
+	let SolumTokenInstance;
+	let CrowdsaleInstance = {
+		delegate: () => {},
+		changeDelegate: (newDelegate) => {},
+		stageOneDates: (i) => {},
+		stageTwoDates: (i) => {},
+		price: () => {},
+		tokenTotalSupply: () => {},
+		customPayment: (_beneficiary, _value) => {},
+		changeSecondStageGoal: (_ethAmount) => {},
+		withdrawFunds: () => {},
+		withdrawRemainingTokens: () => {},
+		stageSaleAmount: () => {}
 	};
 	
-	beforeEach(async function() {
-		SolumTokenInstance = await SolumToken.new(defrostDate);
-	});
-	
-	it("name should be Solum", async function() {
-		let name = await SolumTokenInstance.name.call();
-		assert.equal(name.valueOf(), "Solum", "Name not Solum");
-	});
-	
-	it("decimals should be 18", async function() {
-		let decimals = await SolumTokenInstance.decimals.call();
-		assert.equal(decimals.valueOf(), 18, "Decimals not 18");
-	});
-	
-	it("should mint token correctly but not send (before defrost)", async function() {
-		const firstAccount = accounts[0],
-			testAccount = accounts[3],
-			amount = 1000;
-		
-		let balance = await SolumTokenInstance.balanceOf.call(testAccount);
-		assert.equal(balance.valueOf(), 0, "Test account balance not zero after deploy");
-		
-		await SolumTokenInstance.mintToken(testAccount, amount, {from: firstAccount});
-		let defrostDate = parseInt((await SolumTokenInstance.defrostDate.call()).valueOf());
-		assert.isTrue(defrostDate > parseInt(new Date().getTime() / 1000), 'Defrost time has come');
-		
-		balance = await SolumTokenInstance.balanceOf.call(testAccount);
-		assert.equal(balance.valueOf(), 0, "Test account balance not zero before defrost time has not come");
-		
-		try {
-			await SolumTokenInstance.transfer(firstAccount, amount, {from: testAccount});
-			assert.fail('The transaction must not pass before defrost time has not come');
-		} catch(error) {
-			assertJump(error);
+	let deployContracts = async (startFirst, endFirst, startSecond, endSecond, goal, transferRights = true) => {
+		SolumTokenInstance = await SolumToken.new(getTime());
+		CrowdsaleInstance = await Crowdsale.new(SolumTokenInstance.address, startFirst, endFirst, startSecond, endSecond, goal);
+		if(transferRights) {
+			await SolumTokenInstance.changeOwner(CrowdsaleInstance.address, {from: ownerAccount});
 		}
+	};
+	
+	describe("crowdsale parameters:", () => {
+		it("should be equal date params with specified", async () => {
+			let startFirst = getTime(10);
+			let endFirst = getTime(20);
+			let startSecond = getTime(30);
+			let endSecond = getTime(40);
+			
+			await deployContracts(startFirst, endFirst, startSecond, endSecond, 1000);
+			assert.equal((await CrowdsaleInstance.stageOneDates.call(0)).valueOf(), startFirst, "Invalid first stage start date");
+			assert.equal((await CrowdsaleInstance.stageOneDates.call(1)).valueOf(), endFirst, "Invalid first stage end date");
+			assert.equal((await CrowdsaleInstance.stageTwoDates.call(0)).valueOf(), startSecond, "Invalid second stage start date");
+			assert.equal((await CrowdsaleInstance.stageTwoDates.call(1)).valueOf(), endSecond, "Invalid second stage end date");
+		});
+
+		it("tokenTotalSupply and stageSaleAmount should be equal with specified", async () => {
+			await deployContracts(getTime(), getTime(), getTime(), getTime(), 1000);
+			assert.equal((await CrowdsaleInstance.tokenTotalSupply.call()).valueOf(), totalMaxSupply, "Invalid tokenTotalSupply");
+			assert.equal((await CrowdsaleInstance.stageSaleAmount.call()).valueOf(), stageGoal, "Invalid first stage start date");
+		});
+
+		it("price should be equal with specified", async () => {
+			await deployContracts(getTime(), getTime(), getTime(), getTime(), goal);
+			assert.equal((await CrowdsaleInstance.price.call()).valueOf(), stageGoal / web3.toWei(goal), "Invalid price");
+		});
 	});
 	
-	it("should be a balance and transfer available after defrost", async function() {
-		const firstAccount = accounts[0],
-			testAccount = accounts[3],
-			amount = 1000;
-		
-		let defrostDate = parseInt((await SolumTokenInstance.defrostDate.call()).valueOf());
-		await waitUntil(defrostDate);
-		assert.isTrue(defrostDate <= parseInt(new Date().getTime() / 1000), 'Defrost time has not come');
-		
-		await SolumTokenInstance.mintToken(testAccount, amount, {from: firstAccount});
-		await SolumTokenInstance.transfer(firstAccount, 1, {from: testAccount});
-		
-		let balance = await SolumTokenInstance.balanceOf.call(testAccount);
-		assert.equal(balance.valueOf(), amount - 1, "Invalid test account balance after defrost time has not come");
+	describe("changeDelegate()", () => {
+		it("should change delegate", async () => {
+			await deployContracts(getTime(), getTime(), getTime(), getTime(), 1000);
+			assert.equal((await CrowdsaleInstance.delegate.call()).valueOf(), ownerAccount, "Delegate not contract creator");
+			await CrowdsaleInstance.changeDelegate(accounts[1]);
+			assert.equal((await CrowdsaleInstance.delegate.call()).valueOf(), accounts[1], "Invalid delegate after change");
+		});
 	});
 	
-	////////////////////////////////
-	/// DEFROST TIME HAS COME!!! ///
-	////////////////////////////////
-	
-	describe('transfer()', function() {
-		it("should not mint token (mint from not owner)", async function() {
-			const testAccount = accounts[4];
-			const amount = 1000;
+	describe("payments", () => {
+		it("should forbid if start first stage date has not come", async () => {
+			await deployContracts(getTime(10), getTime(20), getTime(30), getTime(40), 1000);
 			
 			try {
-				await SolumTokenInstance.mintToken(testAccount, amount, {from: testAccount});
-				assert.fail('Not owner account minted tokens');
+				await CrowdsaleInstance.send(web3.toWei(1, "ether"));
+				assert.fail('The transaction must not pass');
 			} catch(error) {
 				assertJump(error);
 			}
 		});
 		
-		it("should correct mint", async function() {
-			const amount = 1000;
-			await SolumTokenInstance.mintToken(ownerAccount, amount, {from: ownerAccount});
-			assert.equal((await SolumTokenInstance.balanceOf.call(ownerAccount)).valueOf(), amount, "Invalid balance after mint");
+		it("should allow if start first stage date has come", async () => {
+			await deployContracts(getTime(-10), getTime(20), getTime(30), getTime(40), 1000);
+			await CrowdsaleInstance.send(web3.toWei(1, "ether"));
 		});
-	});
-	
-	describe('mintToken()', function() {
-		it("should not mint token (mint from not owner)", async function() {
-			const testAccount = accounts[4];
-			const amount = 1000;
+		
+		it("should forbid if start second stage date has not come, but first ended", async () => {
+			await deployContracts(getTime(-20), getTime(-10), getTime(30), getTime(40), 1000);
 			
 			try {
-				await SolumTokenInstance.mintToken(testAccount, amount, {from: testAccount});
-				assert.fail('Not owner account minted tokens');
+				await CrowdsaleInstance.send(web3.toWei(1, "ether"));
+				assert.fail('The transaction must not pass');
 			} catch(error) {
 				assertJump(error);
 			}
 		});
 		
-		it("should correct mint", async function() {
-			const amount = 1000;
-			await SolumTokenInstance.mintToken(ownerAccount, amount, {from: ownerAccount});
-			assert.equal((await SolumTokenInstance.balanceOf.call(ownerAccount)).valueOf(), amount, "Invalid balance after mint");
-		});
-	});
-	
-	describe('balanceOf()', function() {
-		const amount = 1000;
-		
-		it("should be 0", async function() {
-			assert.equal((await SolumTokenInstance.balanceOf.call(ownerAccount)).valueOf(), 0, "Invalid balance before mint");
+		it("should allow if start second stage date has come", async () => {
+			await deployContracts(getTime(-20), getTime(-10), getTime(-5), getTime(40), 1000);
+			await CrowdsaleInstance.send(web3.toWei(1, "ether"));
 		});
 		
-		it("should be 0 if frozen", async function() {
-			let defrostDate = parseInt(new Date().getTime() / 1000) + defrostDelaySec;
-			let SolumTokenInstance = await SolumToken.new(defrostDate);
-			await SolumTokenInstance.mintToken(ownerAccount, amount, {from: ownerAccount});
-			assert.equal((await SolumTokenInstance.balanceOf.call(ownerAccount)).valueOf(), 0, "Invalid balance before defrost");
-		});
-	});
-	
-	describe('totalSupply()', function() {
-		it("should be 0", async function() {
-			assert.equal((await SolumTokenInstance.totalSupply.call()).valueOf(), 0, "Invalid total supply");
-		});
-		
-		it("should equal total supply and sum all accounts balances", async function() {
-			await SolumTokenInstance.mintToken(accounts[0], randomInteger(23000, 10000000000000000000000), {from: accounts[0]});
-			await SolumTokenInstance.mintToken(accounts[1], randomInteger(23000, 10000000000000000000000), {from: accounts[0]});
-			await SolumTokenInstance.mintToken(accounts[2], randomInteger(23000, 10000000000000000000000), {from: accounts[0]});
-			await SolumTokenInstance.transfer(accounts[2], 23000, {from: accounts[0]});
-			
-			let sum = 0;
-			accounts.forEach(async account => {
-				let balance = await SolumTokenInstance.balanceOf.call(account);
-				sum = new BigNumber(balance.valueOf()).plus(sum);
+		it("should correct mint tokens", async () => {
+			const goal = 1000;
+			await deployContracts(getTime(-10), getTime(20), getTime(30), getTime(40), goal);
+			await CrowdsaleInstance.send(web3.toWei(1, "ether"), {
+				from: ownerAccount
 			});
-			assert.equal((await SolumTokenInstance.totalSupply.call()).valueOf(), sum.valueOf(), "Invalid total supply");
+			let shouldReceive = new BigNumber(stageGoal).div(goal);
+			assert.equal((await SolumTokenInstance.balanceOf.call(ownerAccount)).toNumber(), shouldReceive, "Invalid balance after mint");
+		});
+		
+		it("should correct mint tokens after double payment", async () => {
+			const goal = 1000;
+			await deployContracts(getTime(-10), getTime(20), getTime(30), getTime(40), goal);
+			await CrowdsaleInstance.send(web3.toWei(1, "ether"), {from: ownerAccount});
+			await CrowdsaleInstance.send(web3.toWei(1, "ether"), {from: ownerAccount});
+			let shouldReceive = new BigNumber(stageGoal).div(goal).mul(2);
+			assert.equal((await SolumTokenInstance.balanceOf.call(ownerAccount)).toNumber(), shouldReceive, "Invalid balance after mint");
+		});
+		
+		it("should resend change (goal reached)", async () => {
+			const goal = 10;
+			await deployContracts(getTime(-10), getTime(20), getTime(30), getTime(40), goal);
+			let HelperInstance = await Helper.new();
+			let accountBalance = new BigNumber(await HelperInstance.getBalance.call({from: ownerAccount}));
+			let result = await CrowdsaleInstance.send(web3.toWei(9, "ether"), {from: ownerAccount});
+			accountBalance = accountBalance.minus(gasPrice * result.receipt.gasUsed);
+			result = await CrowdsaleInstance.send(web3.toWei(2, "ether"), {from: ownerAccount});
+			accountBalance = accountBalance.minus(gasPrice * result.receipt.gasUsed);
+			assert.equal((await SolumTokenInstance.balanceOf.call(ownerAccount)).toNumber(), stageGoal, "Invalid token balance after mint");
+			assert.equal((await HelperInstance.getBalance.call({from: ownerAccount})).toNumber(), accountBalance.sub(web3.toWei(10, "ether")).toNumber(), "Invalid balance after mint");
+		});
+		
+		it("should forbid transfer (goal reached)", async () => {
+			const goal = 10;
+			await deployContracts(getTime(-10), getTime(20), getTime(30), getTime(40), goal);
+			await CrowdsaleInstance.send(web3.toWei(20, "ether"), {from: ownerAccount});
+			try {
+				await CrowdsaleInstance.send(web3.toWei(2, "ether"), {from: ownerAccount});
+				assert.fail('The transaction must not pass');
+			} catch(error) {
+				assertJump(error);
+			}
 		});
 	});
 	
-	describe('approve() and allowance()', function() {
-		const spenderAccount = accounts[3];
-		const amount = 1000;
-		
-		it("should be 0", async function() {
-			assert.equal((await SolumTokenInstance.allowance.call(ownerAccount, spenderAccount)).valueOf(), 0, "Invalid allowance before allow");
+	describe("customPayment()", () => {
+		it("should forbid if called not delegate", async () => {
+			await deployContracts(getTime(-10), getTime(20), getTime(30), getTime(40), goal);
+			try {
+				await CrowdsaleInstance.customPayment(accounts[0], web3.toWei(2, "ether"), {from: accounts[3]});
+				assert.fail('The transaction must not pass');
+			} catch(error) {
+				assertJump(error);
+			}
 		});
 		
-		it("should be correct approve", async function() {
-			await SolumTokenInstance.mintToken(ownerAccount, amount, {from: ownerAccount});
-			await SolumTokenInstance.approve(spenderAccount, amount, {from: ownerAccount});
-			assert.equal((await SolumTokenInstance.allowance.call(ownerAccount, spenderAccount)).valueOf(), amount, "Invalid allowance after allow");
+		it("should correct mint", async () => {
+			await deployContracts(getTime(-10), getTime(20), getTime(30), getTime(40), goal);
+			await CrowdsaleInstance.customPayment(accounts[1], web3.toWei(goal / 2, "ether"), {from: ownerAccount});
+			assert.equal((await SolumTokenInstance.balanceOf.call(accounts[1])).toNumber(), new BigNumber(stageGoal).div(2).toNumber(), "Invalid token balance after mint");
+		});
+	});
+	
+	describe("withdrawFunds()", () => {
+		it("should forbid if now first stage", async () => {
+			await deployContracts(getTime(-10), getTime(20), getTime(30), getTime(40), goal);
+			try {
+				await CrowdsaleInstance.withdrawFunds({from: ownerAccount});
+				assert.fail('The transaction must not pass');
+			} catch(error) {
+				assertJump(error);
+			}
 		});
 		
-		it("should be forbid approve if allowance not 0", async function() {
-			await SolumTokenInstance.mintToken(ownerAccount, amount, {from: ownerAccount});
-			await SolumTokenInstance.approve(spenderAccount, amount, {from: ownerAccount});
+		it("should forbid if now second stage", async () => {
+			await deployContracts(getTime(-20), getTime(-10), getTime(-5), getTime(40), goal);
+			try {
+				await CrowdsaleInstance.withdrawFunds({from: ownerAccount});
+				assert.fail('The transaction must not pass');
+			} catch(error) {
+				assertJump(error);
+			}
+		});
+		
+		it("should forbid if called from not-owner account", async () => {
+			await deployContracts(getTime(-20), getTime(-10), getTime(-5), getTime(-2), goal);
+			try {
+				await CrowdsaleInstance.withdrawFunds({from: accounts[3]});
+				assert.fail('The transaction must not pass');
+			} catch(error) {
+				assertJump(error);
+			}
+		});
+		
+		it("should correct withdraw", async () => {
+			let HelperInstance = await Helper.new();
+			await deployContracts(getTime(-20), getTime(-10), getTime(-5), getTime(2), goal);
+			await CrowdsaleInstance.send(web3.toWei(5, "ether"), {from: ownerAccount});
+
+			let accountBalance = new BigNumber(await HelperInstance.getBalance.call({from: ownerAccount}));
+			await wait(2000);
+
+			let result = await CrowdsaleInstance.withdrawFunds({from: ownerAccount});
+			accountBalance = accountBalance.minus(gasPrice * result.receipt.gasUsed);
+
+			assert.equal((await HelperInstance.getBalance.call({from: ownerAccount})).toNumber(), accountBalance.add(web3.toWei(5, "ether")).toNumber(), "Invalid balance after withdraw");
+		});
+		
+		it("should correct if balance 0", async () => {
+			await deployContracts(getTime(-20), getTime(-10), getTime(-5), getTime(-2), goal);
+			await CrowdsaleInstance.withdrawFunds({from: ownerAccount});
+		});
+	});
+	
+	describe("withdrawRemainingTokens()", () => {
+		it("should forbid if stage 2 not ended", async () => {
+			await deployContracts(getTime(-20), getTime(-10), getTime(-5), getTime(2), goal);
+			await CrowdsaleInstance.send(web3.toWei(goal / 4, "ether"), {from: ownerAccount});
+			await CrowdsaleInstance.customPayment(accounts[1], web3.toWei(goal / 4, "ether"), {from: ownerAccount});
+			try {
+				await CrowdsaleInstance.withdrawRemainingTokens({from: ownerAccount});
+				assert.fail('The transaction must not pass');
+			} catch(error) {
+				assertJump(error);
+			}
+		});
+		
+		it("should correct withdraw", async () => {
+			await deployContracts(getTime(-20), getTime(-10), getTime(-5), getTime(2), goal);
+			await CrowdsaleInstance.send(web3.toWei(goal / 4, "ether"), {from: ownerAccount});
+			await CrowdsaleInstance.customPayment(accounts[1], web3.toWei(goal / 4, "ether"), {from: ownerAccount});
+			await wait(2000);
 			
-			try {
-				await SolumTokenInstance.approve(spenderAccount, amount, {from: ownerAccount});
-				assert.fail('User not should approve if allowance not 0');
-			} catch(error) {
-				assertJump(error);
-			}
-		});
-		
-		it("should be correct approve after clear allowance", async function() {
-			await SolumTokenInstance.mintToken(ownerAccount, amount, {from: ownerAccount});
-			await SolumTokenInstance.approve(spenderAccount, amount, {from: ownerAccount});
-			await SolumTokenInstance.approve(spenderAccount, 0, {from: ownerAccount});
-			await SolumTokenInstance.approve(spenderAccount, amount, {from: ownerAccount});
+			await CrowdsaleInstance.withdrawRemainingTokens({from: ownerAccount});
+			assert.equal((await SolumTokenInstance.balanceOf.call(ownerAccount)).toNumber(), new BigNumber(totalMaxSupply).minus(new BigNumber(stageGoal).mul(0.25)).toNumber(), "Invalid token balance after withdraw");
 		});
 	});
 	
-	describe('transferFrom()', function() {
-		
-		const spenderAccount = accounts[3];
-		const receiveAccount = accounts[4];
-		const amount = 1000;
-		
-		it("should forbid transferFrom if frozen", async function() {
-			let defrostDate = parseInt(new Date().getTime() / 1000) + defrostDelaySec;
-			// for test frozed create local instance
-			let SolumTokenInstance = await SolumToken.new(defrostDate);
-			await SolumTokenInstance.mintToken(ownerAccount, amount, {from: ownerAccount});
-			await SolumTokenInstance.approve(spenderAccount, amount, {from: ownerAccount});
+	describe("changeSecondStageGoal()", () => {
+		it("should forbid if stage 1 not ended", async () => {
+			await deployContracts(getTime(-20), getTime(10), getTime(15), getTime(20), goal);
 			try {
-				await SolumTokenInstance.transferFrom(ownerAccount, receiveAccount, amount, {from: spenderAccount});
-				assert.fail('User not should approve if defrost time has not come');
+				await CrowdsaleInstance.changeSecondStageGoal(goal * 2, {from: ownerAccount});
+				assert.fail('The transaction must not pass');
 			} catch(error) {
 				assertJump(error);
 			}
 		});
 		
-		it("should forbid transferFrom if allowance is 0", async function() {
+		it("should forbid if stage 2 is started", async () => {
+			await deployContracts(getTime(-20), getTime(-10), getTime(-5), getTime(20), goal);
 			try {
-				await SolumTokenInstance.transferFrom(ownerAccount, receiveAccount, amount, {from: spenderAccount});
-				assert.fail('User not should approve if allowed not zero');
+				await CrowdsaleInstance.changeSecondStageGoal(goal * 2, {from: ownerAccount});
+				assert.fail('The transaction must not pass');
 			} catch(error) {
 				assertJump(error);
 			}
 		});
 		
-		it("should forbid transferFrom if there is not enough balance", async function() {
-			await SolumTokenInstance.approve(spenderAccount, amount, {from: ownerAccount});
+		it("should forbid if called from not-owner", async () => {
+			await deployContracts(getTime(-20), getTime(-10), getTime(5), getTime(20), goal);
 			try {
-				await SolumTokenInstance.transferFrom(ownerAccount, receiveAccount, amount, {from: spenderAccount});
-				assert.fail('User not should approve if approver balance 0');
+				await CrowdsaleInstance.changeSecondStageGoal(goal * 2, {from: accounts[3]});
+				assert.fail('The transaction must not pass');
 			} catch(error) {
 				assertJump(error);
 			}
 		});
 		
-		it("should correct transfer", async function() {
-			await SolumTokenInstance.mintToken(ownerAccount, amount, {from: ownerAccount});
-			await SolumTokenInstance.approve(spenderAccount, amount / 2, {from: ownerAccount});
-			await SolumTokenInstance.transferFrom(ownerAccount, receiveAccount, amount / 4, {from: spenderAccount});
-			assert.equal((await SolumTokenInstance.allowance.call(ownerAccount, spenderAccount)).valueOf(), amount / 4, "Invalid allowance after transfer");
-			assert.equal((await SolumTokenInstance.balanceOf.call(ownerAccount)).valueOf(), amount * 3 / 4, "Invalid owner balance after transfer");
-			assert.equal((await SolumTokenInstance.balanceOf.call(receiveAccount)).valueOf(), amount / 4, "Invalid receiver balance after transfer");
-			assert.equal((await SolumTokenInstance.balanceOf.call(spenderAccount)).valueOf(), 0, "Invalid spender balance after transfer");
+		it("should correct change", async () => {
+			await deployContracts(getTime(-20), getTime(-10), getTime(2), getTime(20), goal);
+			await CrowdsaleInstance.changeSecondStageGoal(goal * 2, {from: ownerAccount});
+			assert.equal((await CrowdsaleInstance.price.call()).valueOf(), stageGoal / web3.toWei(goal) / 2, "Invalid price");
 		});
 	});
 	
+	describe("halt() and unhalt()", () => {
+		
+		it("should forbid halt if called from not-owner", async () => {
+			await deployContracts(getTime(-20), getTime(-10), getTime(-2), getTime(20), goal);
+			try {
+				await CrowdsaleInstance.halt({from: accounts[3]});
+				assert.fail('The transaction must not pass');
+			} catch(error) {
+				assertJump(error);
+			}
+		});
+		
+		it("should correct halt", async () => {
+			await deployContracts(getTime(-20), getTime(-10), getTime(-2), getTime(20), goal);
+			await CrowdsaleInstance.halt({from: ownerAccount});
+			try {
+				await CrowdsaleInstance.send(web3.toWei(1, "ether"), {from: ownerAccount});
+				assert.fail('The transaction must not pass');
+			} catch(error) {
+				assertJump(error);
+			}
+		});
+		
+		it("should forbid unhalt if called from not-owner", async () => {
+			await deployContracts(getTime(-20), getTime(-10), getTime(-2), getTime(20), goal);
+			await CrowdsaleInstance.halt({from: ownerAccount});
+			try {
+				await CrowdsaleInstance.unhalt({from: accounts[3]});
+				assert.fail('The transaction must not pass');
+			} catch(error) {
+				assertJump(error);
+			}
+		});
+		
+		it("should correct unhalt", async () => {
+			await deployContracts(getTime(-20), getTime(-10), getTime(-2), getTime(20), goal);
+			await CrowdsaleInstance.halt({from: ownerAccount});
+			await CrowdsaleInstance.unhalt({from: ownerAccount});
+			await CrowdsaleInstance.send(web3.toWei(1, "ether"), {from: ownerAccount});
+		});
+	});
 });
