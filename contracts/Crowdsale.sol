@@ -13,7 +13,7 @@ contract Crowdsale is Owned, Delegate {
 
 	SolumToken public token;
 
-	uint256 public tokenTotalSupply;
+	uint256 public tokenTotalSupply = 0;
 	/// the founder address can set this to true to halt the crowdsale due to emergency
 	bool public halted = false;
 	uint256 public stageSaleAmount;
@@ -25,7 +25,11 @@ contract Crowdsale is Owned, Delegate {
 
 	mapping(uint8 => uint256) public totalSupplyByStage;
 
+	uint256 public countInvestors;
+
 	uint256 public price;
+
+	mapping(address => uint256) public balanceOf;
 
 	// Modifiers
 	modifier validPurchase(uint256 _value) {
@@ -100,6 +104,10 @@ contract Crowdsale is Owned, Delegate {
 			tokenAmount = notSold;
 		}
 		totalSupplyByStage[stage] = totalSupplyByStage[stage].add(tokenAmount);
+		if(balanceOf[_beneficiary] == 0) {
+			countInvestors++;
+		}
+		balanceOf[_beneficiary] = balanceOf[_beneficiary].add(_value.sub(unusedValue));
 
 		token.mintToken(_beneficiary, tokenAmount);
 		return unusedValue;
