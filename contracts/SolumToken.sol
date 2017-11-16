@@ -3,14 +3,18 @@ pragma solidity ^0.4.11;
 import "./SafeMath.sol";
 import "./Owned.sol";
 import "./ERC20Basic.sol";
-
+import "./Date.sol";
+// TODO remove before deploy!!!
+import "./Debug.sol";
 
 /**
  * @dev Implementation of the basic standard token.
  * @dev Based on code by FirstBlood: https://github.com/Firstbloodio/token/blob/master/smart_contract/FirstBloodToken.sol
  */
-contract SolumToken is ERC20Basic, Owned {
+contract SolumToken is ERC20Basic, Owned, Debug {
 	using SafeMath for uint256;
+
+	event Fee(address indexed _payer, uint256 _value, uint32 _month);
 
 	string public name = "Solum";
 
@@ -25,8 +29,21 @@ contract SolumToken is ERC20Basic, Owned {
 
 	mapping (address => mapping (address => uint256)) allowed;
 
-	function SolumToken(uint256 _defrostDate) public {
+	address public founder;
+
+	Date dateTime;
+
+	mapping (uint32 => uint256) public feePool;
+
+	address[] holders;
+	mapping (address => uint256) holdersIndexes;
+
+	function SolumToken(uint256 _defrostDate, address _founder) public {
 		defrostDate = _defrostDate;
+		dateTime = new Date();
+		founder = _founder;
+		holders.push(this);
+		_addHolder(_founder);
 	}
 
 	/**
@@ -37,16 +54,20 @@ contract SolumToken is ERC20Basic, Owned {
 	function transfer(address _to, uint256 _value) external returns (bool) {
 		require(defrostDate <= block.timestamp);
 		require(_to != address(0));
-
+		uint256 fee = _value.mul(5).div(100);
 		// SafeMath.sub will throw if there is not enough balance.
 		balances[msg.sender] = balances[msg.sender].sub(_value);
 		balances[_to] = balances[_to].add(_value);
+		_addHolder(_to);
+
 		Transfer(msg.sender, _to, _value);
+		refillFeePool(msg.sender, fee);
 		return true;
 	}
 
 	function mintToken(address _to, uint256 _value) external onlyOwner {
 		balances[_to] = balances[_to].add(_value);
+		_addHolder(_to);
 		_totalSupply = _totalSupply.add(_value);
 		Transfer(this, _to, _value);
 	}
@@ -77,13 +98,17 @@ contract SolumToken is ERC20Basic, Owned {
 		require(defrostDate <= block.timestamp);
 		require(_to != address(0));
 
+		uint256 fee = _value.mul(5).div(100);
+
 		// Check is not needed because s_allowance.sub(_value) will already throw if this condition is not met
 		// require (_value <= _allowance);
 
 		balances[_from] = balances[_from].sub(_value);
 		balances[_to] = balances[_to].add(_value);
+		_addHolder(_to);
 		allowed[_from][msg.sender] = allowed[_from][msg.sender].sub(_value);
 		Transfer(_from, _to, _value);
+		refillFeePool(_from, fee);
 		return true;
 	}
 
@@ -114,8 +139,59 @@ contract SolumToken is ERC20Basic, Owned {
 		return allowed[_owner][_spender];
 	}
 
+	function refillFeePool(address _sender, uint256 _fee) internal {
+		// SafeMath.sub will throw if there is not enough balance.
+		uint256 halfFee = _fee.div(2);
+		balances[_sender] = balances[_sender].sub(_fee);
+		balances[founder] = balances[founder].add(halfFee);
+
+		uint32 month = uint32(dateTime.getYear(now) | (dateTime.getMonth(now) * 2 ** 16));
+		feePool[month] = feePool[month].add(halfFee);
+		Fee(_sender, _fee, month);
+	}
+
+	function sendDividends(uint16 year, uint8 month) external {
+		uint16 currentYear = dateTime.getYear(now);
+		uint8 currentMonth = dateTime.getMonth(now);
+		require(year <= currentYear);
+		if(year == currentYear) {
+			require(month < currentMonth);
+		}
+		uint32 key = uint32(year | (month * 2 ** 16));
+		require(feePool[key] > 0);
+
+		uint feePoolValue = feePool[key];
+		uint receivedFees;
+		uint dividend;
+
+		for(uint i = 0; i < holders.length; i++) {
+			if(balances[holders[i]] >= 10 ** decimals * 100000) {
+				dividend = feePoolValue * balances[holders[i]] / _totalSupply;
+				Transfer(this, holders[i], dividend);
+				balances[holders[i]] = balances[holders[i]].add(dividend);
+				receivedFees = receivedFees.add(dividend);
+			}
+		}
+		uint32 currentMonthKey = uint32(currentYear | (currentMonth * 2 ** 16));
+		if(receivedFees < feePoolValue) {
+			feePool[currentMonthKey] = feePool[currentMonthKey].add(feePoolValue.sub(receivedFees));
+		}
+		delete feePool[key];
+	}
+
+	function _addHolder(address _receiver) internal {
+		if(holdersIndexes[_receiver] == 0) {
+			holdersIndexes[_receiver] = holders.length;
+			holders.push(_receiver);
+		}
+	}
+
 	function() external {
 		//if ether is sent to this address, send it back.
 		revert();
+	}
+
+	function getNow() public constant returns(uint) {
+		return now;
 	}
 }

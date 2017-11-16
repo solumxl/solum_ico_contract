@@ -3,6 +3,7 @@
 const SolumToken = artifacts.require("./SolumToken.sol");
 const assertJump = require('./helpers/assertJump');
 const BigNumber = require('bignumber.js');
+const moment = require('moment');
 
 let wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 let waitUntil = time => {
@@ -22,9 +23,13 @@ let randomInteger = (min, max) => {
 // correct this for eth-net. 2 sec delay actual only for testRPC
 const defrostDelaySec = 2;
 let defrostDate = parseInt(new Date().getTime() / 1000);
+let currentDate = parseInt(new Date().getTime() / 1000);
 
 contract('SolumToken', function(accounts) {
 	const ownerAccount = accounts[0];
+	const founderAccount = accounts[5];
+	const feePercent = 0.05;
+	const decimals = 18;
 	
 	let SolumTokenInstance = {
 		// only for ide tips
@@ -35,9 +40,13 @@ contract('SolumToken', function(accounts) {
 		allowance: (_owner, _spender) => {}
 	};
 	
-	beforeEach(async function() {
-		SolumTokenInstance = await SolumToken.new(defrostDate);
-	});
+	let deploy = async function(_defrostDate = defrostDate, _founderAccount = founderAccount) {
+		SolumTokenInstance = await SolumToken.new(_defrostDate, _founderAccount);
+		
+		await SolumTokenInstance.setBlockTime(currentDate);
+	};
+	
+	beforeEach(() => deploy());
 	
 	it("name should be Solum", async function() {
 		let name = await SolumTokenInstance.name.call();
@@ -46,12 +55,12 @@ contract('SolumToken', function(accounts) {
 	
 	it("decimals should be 18", async function() {
 		let decimals = await SolumTokenInstance.decimals.call();
-		assert.equal(decimals.valueOf(), 18, "Decimals not 18");
+		assert.equal(decimals.valueOf(), decimals, "Decimals not " + decimals);
 	});
 	
 	it("should mint token correctly but not send (before defrost)", async function() {
 		let defrostDate = parseInt(new Date().getTime() / 1000) + defrostDelaySec;
-		SolumTokenInstance = await SolumToken.new(defrostDate);
+		await deploy(defrostDate, founderAccount);
 		
 		const firstAccount = accounts[0],
 			testAccount = accounts[3],
@@ -80,39 +89,12 @@ contract('SolumToken', function(accounts) {
 			testAccount = accounts[3],
 			amount = 1000;
 		
-		let defrostDate = parseInt((await SolumTokenInstance.defrostDate.call()).valueOf());
-		await waitUntil(defrostDate);
-		assert.isTrue(defrostDate <= parseInt(new Date().getTime() / 1000), 'Defrost time has not come');
-		
+		let defrostDate = (await SolumTokenInstance.defrostDate.call()).toNumber();
+		await SolumTokenInstance.setBlockTime(defrostDate + 1);
 		await SolumTokenInstance.mintToken(testAccount, amount, {from: firstAccount});
 		await SolumTokenInstance.transfer(firstAccount, 1, {from: testAccount});
-		
 		let balance = await SolumTokenInstance.balanceOf.call(testAccount);
 		assert.equal(balance.valueOf(), amount - 1, "Invalid test account balance after defrost time has not come");
-	});
-	
-	////////////////////////////////
-	/// DEFROST TIME HAS COME!!! ///
-	////////////////////////////////
-	
-	describe('transfer()', function() {
-		it("should not mint token (mint from not owner)", async function() {
-			const testAccount = accounts[4];
-			const amount = 1000;
-			
-			try {
-				await SolumTokenInstance.mintToken(testAccount, amount, {from: testAccount});
-				assert.fail('Not owner account minted tokens');
-			} catch(error) {
-				assertJump(error);
-			}
-		});
-		
-		it("should correct mint", async function() {
-			const amount = 1000;
-			await SolumTokenInstance.mintToken(ownerAccount, amount, {from: ownerAccount});
-			assert.equal((await SolumTokenInstance.balanceOf.call(ownerAccount)).valueOf(), amount, "Invalid balance after mint");
-		});
 	});
 	
 	describe('mintToken()', function() {
@@ -135,6 +117,50 @@ contract('SolumToken', function(accounts) {
 		});
 	});
 	
+	describe('fee', function() {
+		const amount = 1000;
+		
+		it("should forbid if not enough founds for pay fee", async function() {
+			await SolumTokenInstance.mintToken(ownerAccount, amount, {from: ownerAccount});
+			try {
+				await SolumTokenInstance.transfer(accounts[1], amount, {from: ownerAccount});
+				assert.fail('Should trhow');
+			} catch(error) {
+				assertJump(error);
+			}
+		});
+		
+		it("should correct pay fee", async function() {
+			const amount = 1000;
+			await SolumTokenInstance.mintToken(ownerAccount, amount * 2, {from: ownerAccount});
+			let result = await SolumTokenInstance.transfer(accounts[1], amount, {from: ownerAccount});
+			assert.equal((await SolumTokenInstance.balanceOf.call(ownerAccount)).valueOf(), amount - amount * feePercent, "Invalid balance after transfer");
+			assert.equal((await SolumTokenInstance.balanceOf.call(founderAccount)).valueOf(), amount * feePercent / 2, "Invalid founder balance after transfer");
+			assert.equal((await SolumTokenInstance.feePool.call(result.logs[1]['args']['_month'].toNumber())).toNumber(), amount * feePercent / 2, "Invalid amount on fee pool");
+		});
+		
+		it("correct distribution of the commission by months", async () => {
+			await SolumTokenInstance.mintToken(ownerAccount, amount * 5, {from: ownerAccount});
+			let resultFirst = await SolumTokenInstance.transfer(accounts[1], amount, {from: ownerAccount});
+			let resultSecond = await SolumTokenInstance.transfer(accounts[1], amount, {from: ownerAccount});
+			await SolumTokenInstance.setBlockTime(defrostDate + 30 * 24 * 60 * 60);
+			let resultThird = await SolumTokenInstance.transfer(accounts[1], amount, {from: ownerAccount});
+			let resultFourth = await SolumTokenInstance.transfer(accounts[1], amount, {from: ownerAccount});
+			
+			let logsKeys = [
+				resultFirst.logs[1]['args']['_month'].toNumber(),
+				resultSecond.logs[1]['args']['_month'].toNumber(),
+				resultThird.logs[1]['args']['_month'].toNumber(),
+				resultFourth.logs[1]['args']['_month'].toNumber()
+			];
+			assert.equal(logsKeys[0], logsKeys[1], "Keys not equal");
+			assert.equal(logsKeys[2], logsKeys[3], "Keys not equal");
+			assert.notEqual(logsKeys[1], logsKeys[2], "Keys equal");
+			assert.equal((await SolumTokenInstance.feePool.call(logsKeys[0])), amount * feePercent, "Invalid fee amount");
+			assert.equal((await SolumTokenInstance.feePool.call(logsKeys[2])), amount * feePercent, "Invalid fee amount");
+		});
+	});
+	
 	describe('balanceOf()', function() {
 		const amount = 1000;
 		
@@ -144,7 +170,7 @@ contract('SolumToken', function(accounts) {
 		
 		it("should be 0 if frozen", async function() {
 			let defrostDate = parseInt(new Date().getTime() / 1000) + defrostDelaySec;
-			let SolumTokenInstance = await SolumToken.new(defrostDate);
+			await deploy(defrostDate, founderAccount);
 			await SolumTokenInstance.mintToken(ownerAccount, amount, {from: ownerAccount});
 			assert.equal((await SolumTokenInstance.balanceOf.call(ownerAccount)).valueOf(), 0, "Invalid balance before defrost");
 		});
@@ -159,9 +185,9 @@ contract('SolumToken', function(accounts) {
 			await SolumTokenInstance.mintToken(accounts[0], randomInteger(23000, 10000000000000000000000), {from: accounts[0]});
 			await SolumTokenInstance.mintToken(accounts[1], randomInteger(23000, 10000000000000000000000), {from: accounts[0]});
 			await SolumTokenInstance.mintToken(accounts[2], randomInteger(23000, 10000000000000000000000), {from: accounts[0]});
-			await SolumTokenInstance.transfer(accounts[2], 23000, {from: accounts[0]});
+			let result = (await SolumTokenInstance.transfer(accounts[2], 23000, {from: accounts[0]}));
 			
-			let sum = 0;
+			let sum = (await SolumTokenInstance.feePool.call(result.logs[1]['args']['_month'].toNumber()));
 			accounts.forEach(async account => {
 				let balance = await SolumTokenInstance.balanceOf.call(account);
 				sum = new BigNumber(balance.valueOf()).plus(sum);
@@ -213,7 +239,7 @@ contract('SolumToken', function(accounts) {
 		it("should forbid transferFrom if frozen", async function() {
 			let defrostDate = parseInt(new Date().getTime() / 1000) + defrostDelaySec;
 			// for test frozed create local instance
-			let SolumTokenInstance = await SolumToken.new(defrostDate);
+			await deploy(defrostDate, founderAccount);
 			await SolumTokenInstance.mintToken(ownerAccount, amount, {from: ownerAccount});
 			await SolumTokenInstance.approve(spenderAccount, amount, {from: ownerAccount});
 			try {
@@ -246,9 +272,10 @@ contract('SolumToken', function(accounts) {
 		it("should correct transfer", async function() {
 			await SolumTokenInstance.mintToken(ownerAccount, amount, {from: ownerAccount});
 			await SolumTokenInstance.approve(spenderAccount, amount / 2, {from: ownerAccount});
-			await SolumTokenInstance.transferFrom(ownerAccount, receiveAccount, amount / 4, {from: spenderAccount});
+			let result = (await SolumTokenInstance.transferFrom(ownerAccount, receiveAccount, amount / 4, {from: spenderAccount}));
+			let fee = (await SolumTokenInstance.feePool.call(result.logs[1]['args']['_month'].toNumber()));
 			assert.equal((await SolumTokenInstance.allowance.call(ownerAccount, spenderAccount)).valueOf(), amount / 4, "Invalid allowance after transfer");
-			assert.equal((await SolumTokenInstance.balanceOf.call(ownerAccount)).valueOf(), amount * 3 / 4, "Invalid owner balance after transfer");
+			assert.equal((await SolumTokenInstance.balanceOf.call(ownerAccount)).valueOf(), new BigNumber(amount * 3 / 4).minus(fee.mul(2)).toNumber(), "Invalid owner balance after transfer");
 			assert.equal((await SolumTokenInstance.balanceOf.call(receiveAccount)).valueOf(), amount / 4, "Invalid receiver balance after transfer");
 			assert.equal((await SolumTokenInstance.balanceOf.call(spenderAccount)).valueOf(), 0, "Invalid spender balance after transfer");
 		});
@@ -258,6 +285,56 @@ contract('SolumToken', function(accounts) {
 		it("should be changed owner", async function() {
 			await SolumTokenInstance.changeOwner(accounts[1]);
 			assert.equal((await SolumTokenInstance.owner.call()).valueOf(), accounts[1], "Invalid owner after change");
+		});
+	});
+	
+	describe('sendDividends()', function() {
+		let amount = new BigNumber(10).pow(decimals).mul(100000).mul(2);
+		
+		it("should be changed owner", async function() {
+			await SolumTokenInstance.mintToken(ownerAccount, amount, {from: ownerAccount});
+			await SolumTokenInstance.transfer(accounts[1], amount.div(2), {from: ownerAccount});
+			try {
+				await SolumTokenInstance.sendDividends(moment().format('YYYY'), moment().format('M'), {from: ownerAccount});
+				assert.fail('Should throw');
+			} catch(error) {
+				assertJump(error);
+			}
+		});
+		
+		it("should correct send dividend", async function() {
+			let sendAmount = amount.div(2);
+			await SolumTokenInstance.mintToken(ownerAccount, amount, {from: ownerAccount});
+			await SolumTokenInstance.transfer(accounts[1], sendAmount, {from: ownerAccount});
+			await SolumTokenInstance.setBlockTime(moment().add(1, 'month').format('X'));
+			await SolumTokenInstance.sendDividends(moment().format('YYYY'), moment().format('M'), {from: ownerAccount});
+			let balance = (await SolumTokenInstance.balanceOf.call(accounts[1])).toNumber();
+			let expectedBalance = sendAmount.add(sendAmount.mul(feePercent / 4)).toNumber();
+			assert.equal(balance, expectedBalance, "Invalid receiver balance after send dividends");
+		});
+		
+		it("should not send if balance less than 100 000 tokens", async function() {
+			let sendAmount = amount.div(2);
+			await SolumTokenInstance.mintToken(ownerAccount, amount, {from: ownerAccount});
+			await SolumTokenInstance.transfer(accounts[1], sendAmount, {from: ownerAccount});
+			await SolumTokenInstance.setBlockTime(moment().add(1, 'month').format('X'));
+			await SolumTokenInstance.sendDividends(moment().format('YYYY'), moment().format('M'), {from: ownerAccount});
+			let balance = (await SolumTokenInstance.balanceOf.call(ownerAccount)).toNumber();
+			let expectedBalance = sendAmount.minus(sendAmount.mul(feePercent)).toNumber();
+			assert.equal(balance, expectedBalance, "Invalid sender balance after send dividends");
+		});
+		
+		it("should correct transfer residue", async function() {
+			let sendAmount = amount.div(2);
+			await SolumTokenInstance.mintToken(ownerAccount, amount, {from: ownerAccount});
+			await SolumTokenInstance.transfer(accounts[1], sendAmount, {from: ownerAccount});
+			await SolumTokenInstance.setBlockTime(moment().add(1, 'month').format('X'));
+			await SolumTokenInstance.sendDividends(moment().format('YYYY'), moment().format('M'), {from: ownerAccount});
+			let result = await SolumTokenInstance.transfer(accounts[1], sendAmount.div(2), {from: ownerAccount});
+			let key = result.logs[1]['args']['_month'].toNumber();
+			let residue = (await SolumTokenInstance.feePool.call(key)).toNumber();
+			let expectedResidue = sendAmount.mul(feePercent / 4).plus(sendAmount.div(2).mul(feePercent / 2)).toNumber();
+			assert.equal(residue, expectedResidue, "Invalid  correct transfer residue");
 		});
 	});
 	

@@ -5,9 +5,12 @@
 		"compile": "node_modules/.bin/truffle compile",
 		"migrate": "node_modules/.bin/truffle migrate"
 	},
-  "devDependencies": {
-    "bignumber.js": "^4.1.0",
-    "truffle": "^4.0.1",
-    "web3": "^0.20.2"
-  }
+	"devDependencies": {
+		"bignumber.js": "^4.1.0",
+		"truffle": "^4.0.1",
+		"web3": "^0.20.2"
+	},
+	"dependencies": {
+		"moment": "^2.19.2"
+	}
 }
