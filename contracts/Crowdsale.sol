@@ -146,4 +146,8 @@ contract Crowdsale is Owned, Delegate {
 	function unhalt() external onlyOwner {
 		halted = false;
 	}
+
+	function changeTokenOwner(address _owner) external onlyOwner {
+		token.changeOwner(_owner);
+	}
 }

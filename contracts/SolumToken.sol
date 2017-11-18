@@ -1,11 +1,15 @@
 pragma solidity ^0.4.11;
 
+
 import "./SafeMath.sol";
 import "./Owned.sol";
 import "./ERC20Basic.sol";
-import "./Date.sol";
+import "./IDate.sol";
+
+
 // TODO remove before deploy!!!
 import "./Debug.sol";
+
 
 /**
  * @dev Implementation of the basic standard token.
@@ -14,7 +18,17 @@ import "./Debug.sol";
 contract SolumToken is ERC20Basic, Owned, Debug {
 	using SafeMath for uint256;
 
+	bool public transfersEnabled = true;    // true if transfer/transferFrom are enabled, false if not
+	// triggered when a smart token is deployed - the _token address is defined for forward compatibility, in case we want to trigger the event from a factory
+	event NewSmartToken(address _token);
+	// triggered when the total supply is increased
+	event Issuance(uint256 _amount);
+	// triggered when the total supply is decreased
+	event Destruction(uint256 _amount);
+
 	event Fee(address indexed _payer, uint256 _value, uint32 _month);
+
+	event FeeDispatched(uint16 indexed _month, uint256 _value);
 
 	string public name = "Solum";
 
@@ -31,16 +45,27 @@ contract SolumToken is ERC20Basic, Owned, Debug {
 
 	address public founder;
 
-	Date dateTime;
+	IDate dateTime;
 
-	mapping (uint32 => uint256) public feePool;
+	mapping (uint16 => uint256) public feePool;
+
+	mapping (uint16 => uint256) feePullCountDispatch;
+	mapping (uint16 => uint256) feePullRemainder;
 
 	address[] holders;
+
 	mapping (address => uint256) holdersIndexes;
 
-	function SolumToken(uint256 _defrostDate, address _founder) public {
+	// allows execution only when transfers aren't disabled
+	modifier transfersAllowed {
+		assert(transfersEnabled);
+		_;
+	}
+
+	function SolumToken(uint256 _defrostDate, address _founder, IDate _date) public {
+		NewSmartToken(address(this));
 		defrostDate = _defrostDate;
-		dateTime = new Date();
+		dateTime = _date;
 		founder = _founder;
 		holders.push(this);
 		_addHolder(_founder);
@@ -51,7 +76,7 @@ contract SolumToken is ERC20Basic, Owned, Debug {
 	* @param _to The address to transfer to.
 	* @param _value The amount to be transferred.
 	*/
-	function transfer(address _to, uint256 _value) external returns (bool) {
+	function transfer(address _to, uint256 _value) external transfersAllowed returns (bool) {
 		require(defrostDate <= block.timestamp);
 		require(_to != address(0));
 		uint256 fee = _value.mul(5).div(100);
@@ -94,7 +119,7 @@ contract SolumToken is ERC20Basic, Owned, Debug {
 	 * @param _to address The address which you want to transfer to
 	 * @param _value uint256 the amount of tokens to be transferred
 	 */
-	function transferFrom(address _from, address _to, uint256 _value) external returns (bool) {
+	function transferFrom(address _from, address _to, uint256 _value) external transfersAllowed returns (bool) {
 		require(defrostDate <= block.timestamp);
 		require(_to != address(0));
 
@@ -145,42 +170,71 @@ contract SolumToken is ERC20Basic, Owned, Debug {
 		balances[_sender] = balances[_sender].sub(_fee);
 		balances[founder] = balances[founder].add(halfFee);
 
-		uint32 month = uint32(dateTime.getYear(now) | (dateTime.getMonth(now) * 2 ** 16));
+		uint16 month = dateTime.getYear(now) * 12 + dateTime.getMonth(now);
 		feePool[month] = feePool[month].add(halfFee);
 		Fee(_sender, _fee, month);
 	}
 
-	function sendDividends(uint16 year, uint8 month) external {
-		uint16 currentYear = dateTime.getYear(now);
-		uint8 currentMonth = dateTime.getMonth(now);
-		require(year <= currentYear);
-		if(year == currentYear) {
-			require(month < currentMonth);
-		}
-		uint32 key = uint32(year | (month * 2 ** 16));
-		require(feePool[key] > 0);
+	function sendDividends(uint256 limit, uint16 year, uint8 month) external {
+		// To avoid re-send of dividends, send must be made with disabled transfers
+		require(!transfersEnabled);
 
+		// send must be made only for past months
+		require(year <= dateTime.getYear(now));
+		if (year == dateTime.getYear(now)) {
+			require(month < dateTime.getMonth(now));
+		}
+
+		uint16 key = year * 12 + uint16(month);
 		uint feePoolValue = feePool[key];
+
+		require(feePoolValue > 0);
+
 		uint receivedFees;
 		uint dividend;
+		uint balance;
+		address holder;
+		uint minBalance = 10 ** decimals * 100000;
+		uint start = feePullCountDispatch[key];
+		uint end = start + limit;
+		feePullCountDispatch[key] = end;
 
-		for(uint i = 0; i < holders.length; i++) {
-			if(balances[holders[i]] >= 10 ** decimals * 100000) {
-				dividend = feePoolValue * balances[holders[i]] / _totalSupply;
-				Transfer(this, holders[i], dividend);
-				balances[holders[i]] = balances[holders[i]].add(dividend);
-				receivedFees = receivedFees.add(dividend);
+		if(end > holders.length) {
+			end = holders.length;
+		}
+		if(start == 0) {
+			feePullRemainder[key] = feePoolValue;
+		}
+
+		for (uint i = start; i < end; i++) {
+			holder = holders[i];
+			balance = balances[holder];
+			if (balance >= minBalance) {
+				dividend = feePoolValue * balance / _totalSupply;
+				Transfer(this, holder, dividend);
+				balances[holder] = balance.add(dividend);
+				receivedFees = receivedFees + dividend;
 			}
 		}
-		uint32 currentMonthKey = uint32(currentYear | (currentMonth * 2 ** 16));
-		if(receivedFees < feePoolValue) {
-			feePool[currentMonthKey] = feePool[currentMonthKey].add(feePoolValue.sub(receivedFees));
+
+		feePullRemainder[key] = feePullRemainder[key].sub(receivedFees);
+
+		if(end == holders.length) {
+			if (receivedFees < feePoolValue) {
+				uint16 currentMonthKey = dateTime.getYear(now) * 12 + dateTime.getMonth(now);
+				feePool[currentMonthKey] = feePool[currentMonthKey].add(feePullRemainder[key]);
+			}
+
+			FeeDispatched(key, feePoolValue - feePullRemainder[key]);
+
+			delete feePullRemainder[key];
+			delete feePool[key];
+			delete feePullCountDispatch[key];
 		}
-		delete feePool[key];
 	}
 
 	function _addHolder(address _receiver) internal {
-		if(holdersIndexes[_receiver] == 0) {
+		if (holdersIndexes[_receiver] == 0) {
 			holdersIndexes[_receiver] = holders.length;
 			holders.push(_receiver);
 		}
@@ -191,7 +245,16 @@ contract SolumToken is ERC20Basic, Owned, Debug {
 		revert();
 	}
 
-	function getNow() public constant returns(uint) {
+	function getNow() public constant returns (uint) {
 		return now;
+	}
+
+	/**
+	*	@dev disables/enables transfers
+	*	can only be called by the contract owner
+	*	@param _disable    true to disable transfers, false to enable them
+	*/
+	function changeTransfersStatus(bool _disable) public onlyOwner {
+		transfersEnabled = !_disable;
 	}
 }
