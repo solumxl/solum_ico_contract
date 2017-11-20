@@ -8,14 +8,16 @@ import "./IDate.sol";
 
 
 // TODO remove before deploy!!!
-import "./Debug.sol";
+//import "./Debug.sol";
 
 
 /**
  * @dev Implementation of the basic standard token.
  * @dev Based on code by FirstBlood: https://github.com/Firstbloodio/token/blob/master/smart_contract/FirstBloodToken.sol
  */
-contract SolumToken is ERC20Basic, Owned, Debug {
+contract SolumToken is ERC20Basic, Owned
+//, Debug
+{
 	using SafeMath for uint256;
 
 	bool public transfersEnabled = true;    // true if transfer/transferFrom are enabled, false if not
@@ -95,6 +97,7 @@ contract SolumToken is ERC20Basic, Owned, Debug {
 		_addHolder(_to);
 		_totalSupply = _totalSupply.add(_value);
 		Transfer(this, _to, _value);
+		Issuance(_value);
 	}
 
 	/**
